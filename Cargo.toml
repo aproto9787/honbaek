@@ -1,0 +1,28 @@
+[package]
+name = "honbaek"
+version = "0.1.0"
+edition = "2024"
+description = "A local autonomous runtime built around 魂, 魄, 心, 身, 命, and 怪異."
+license = "MIT"
+repository = "https://github.com/aproto9787/honbaek"
+readme = "README.md"
+keywords = ["agent", "runtime", "cli", "daemon", "tui"]
+categories = ["command-line-utilities"]
+exclude = ["HONBAEK_STATUS.md", "HONBAEK_ARTIFACT.md"]
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+crossterm = "0.28"
+directories = "6"
+libc = "0.2"
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled", "chrono", "uuid"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+uuid = { version = "1", features = ["serde", "v4"] }
