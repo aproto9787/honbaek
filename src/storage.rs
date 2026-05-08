@@ -55,11 +55,21 @@ impl Store {
             CREATE TABLE IF NOT EXISTS events (
                 id TEXT PRIMARY KEY,
                 at TEXT NOT NULL,
-                concept TEXT NOT NULL CHECK (concept IN ('魂', '魄', '心', '身', '命', '怪異')),
+                concept TEXT NOT NULL CHECK (concept IN ('魂', '魄', '心', '戒令', '身', '命', '怪異')),
                 kind TEXT NOT NULL,
                 message TEXT NOT NULL,
                 task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
                 payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS gyeryeong (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                pattern TEXT NOT NULL,
+                action TEXT NOT NULL CHECK (action IN ('warn', 'block')),
+                rationale TEXT NOT NULL,
+                enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS kaeyi (
                 id TEXT PRIMARY KEY,
@@ -97,16 +107,17 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
             CREATE INDEX IF NOT EXISTS idx_tool_calls_at ON tool_calls(at);
             CREATE INDEX IF NOT EXISTS idx_provider_usage_at ON provider_usage(at);
+            CREATE INDEX IF NOT EXISTS idx_gyeryeong_enabled ON gyeryeong(enabled, updated_at);
             CREATE INDEX IF NOT EXISTS idx_kaeyi_updated ON kaeyi(updated_at);
             CREATE INDEX IF NOT EXISTS idx_kaeyi_state ON kaeyi(state);
             "#,
         )?;
-        self.migrate_events_for_kaeyi()?;
+        self.migrate_events_for_current_concepts()?;
         self.seed_builtin_profiles()?;
         Ok(())
     }
 
-    fn migrate_events_for_kaeyi(&self) -> Result<()> {
+    fn migrate_events_for_current_concepts(&self) -> Result<()> {
         let events_sql: Option<String> = self
             .conn
             .query_row(
@@ -117,7 +128,7 @@ impl Store {
             .optional()?;
         if events_sql
             .as_deref()
-            .is_none_or(|sql| sql.contains("'怪異'"))
+            .is_none_or(|sql| sql.contains("'怪異'") && sql.contains("'戒令'"))
         {
             return Ok(());
         }
@@ -130,7 +141,7 @@ impl Store {
             CREATE TABLE events (
                 id TEXT PRIMARY KEY,
                 at TEXT NOT NULL,
-                concept TEXT NOT NULL CHECK (concept IN ('魂', '魄', '心', '身', '命', '怪異')),
+                concept TEXT NOT NULL CHECK (concept IN ('魂', '魄', '心', '戒令', '身', '命', '怪異')),
                 kind TEXT NOT NULL,
                 message TEXT NOT NULL,
                 task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
@@ -317,6 +328,101 @@ impl Store {
         Ok(())
     }
 
+    pub fn create_gyeryeong(
+        &self,
+        title: &str,
+        pattern: &str,
+        action: GyeryeongAction,
+        rationale: &str,
+    ) -> Result<Gyeryeong> {
+        let title = title.trim();
+        let pattern = pattern.trim();
+        let rationale = rationale.trim();
+        if title.is_empty() {
+            bail!("戒令 title must not be empty");
+        }
+        if pattern.is_empty() {
+            bail!("戒令 pattern must not be empty");
+        }
+        if rationale.is_empty() {
+            bail!("戒令 rationale must not be empty");
+        }
+
+        let now = Utc::now();
+        let gyeryeong = Gyeryeong {
+            id: Uuid::new_v4(),
+            title: title.to_string(),
+            pattern: pattern.to_string(),
+            action,
+            rationale: rationale.to_string(),
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        self.conn.execute(
+            "INSERT INTO gyeryeong (id, title, pattern, action, rationale, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                gyeryeong.id.to_string(),
+                &gyeryeong.title,
+                &gyeryeong.pattern,
+                gyeryeong.action.to_string(),
+                &gyeryeong.rationale,
+                gyeryeong.enabled as i64,
+                gyeryeong.created_at.to_rfc3339(),
+                gyeryeong.updated_at.to_rfc3339()
+            ],
+        )?;
+        self.get_gyeryeong(gyeryeong.id)?
+            .ok_or_else(|| anyhow::anyhow!("created 戒令 disappeared before readback"))
+    }
+
+    pub fn list_gyeryeong(&self, limit: usize) -> Result<Vec<Gyeryeong>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, pattern, action, rationale, enabled, created_at, updated_at
+             FROM gyeryeong
+             ORDER BY updated_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], row_to_gyeryeong)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_enabled_gyeryeong(&self) -> Result<Vec<Gyeryeong>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, pattern, action, rationale, enabled, created_at, updated_at
+             FROM gyeryeong
+             WHERE enabled = 1
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_gyeryeong)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_gyeryeong(&self, id: Uuid) -> Result<Option<Gyeryeong>> {
+        self.conn
+            .query_row(
+                "SELECT id, title, pattern, action, rationale, enabled, created_at, updated_at
+                 FROM gyeryeong
+                 WHERE id = ?1",
+                params![id.to_string()],
+                row_to_gyeryeong,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn set_gyeryeong_enabled(&self, id: Uuid, enabled: bool) -> Result<Gyeryeong> {
+        self.conn.execute(
+            "UPDATE gyeryeong SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            params![enabled as i64, Utc::now().to_rfc3339(), id.to_string()],
+        )?;
+        self.get_gyeryeong(id)?
+            .ok_or_else(|| anyhow::anyhow!("戒令 {id} does not exist"))
+    }
+
     pub fn create_kaeyi(
         &self,
         title: &str,
@@ -467,6 +573,7 @@ impl Store {
         let events = self.list_events(30)?;
         let tool_calls = self.list_tool_calls(20)?;
         let provider_usage = self.list_provider_usage(20)?;
+        let gyeryeong = self.list_gyeryeong(20)?;
         let kaeyi = self.list_kaeyi(20)?;
         let sim = Sim {
             current_intent: tasks.first().map(|task| task.prompt.clone()),
@@ -487,6 +594,7 @@ impl Store {
             profiles,
             baek,
             sim,
+            gyeryeong,
             shin,
             myeong,
             kaeyi,
@@ -769,6 +877,20 @@ fn row_to_provider_usage(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderUs
     })
 }
 
+fn row_to_gyeryeong(row: &rusqlite::Row<'_>) -> rusqlite::Result<Gyeryeong> {
+    let action: String = row.get(3)?;
+    Ok(Gyeryeong {
+        id: parse_uuid(row.get::<_, String>(0)?),
+        title: row.get(1)?,
+        pattern: row.get(2)?,
+        action: parse_gyeryeong_action(&action)?,
+        rationale: row.get(4)?,
+        enabled: row.get::<_, i64>(5)? != 0,
+        created_at: parse_time(row.get(6)?),
+        updated_at: parse_time(row.get(7)?),
+    })
+}
+
 fn row_to_kaeyi(row: &rusqlite::Row<'_>) -> rusqlite::Result<Kaeyi> {
     let task_id: Option<String> = row.get(5)?;
     let severity: String = row.get(3)?;
@@ -828,11 +950,18 @@ fn parse_concept(value: &str) -> Concept {
         "魂" => Concept::Hon,
         "魄" => Concept::Baek,
         "心" => Concept::Sim,
+        "戒令" => Concept::Gyeryeong,
         "身" => Concept::Shin,
         "命" => Concept::Myeong,
         "怪異" => Concept::Kaeyi,
         _ => Concept::Hon,
     }
+}
+
+fn parse_gyeryeong_action(value: &str) -> rusqlite::Result<GyeryeongAction> {
+    value.parse().map_err(|error: String| {
+        rusqlite::Error::FromSqlConversionFailure(0, Type::Text, error.into())
+    })
 }
 
 fn parse_kaeyi_severity(value: &str) -> rusqlite::Result<KaeyiSeverity> {
@@ -856,4 +985,55 @@ fn configure_connection(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn gyeryeong_records_persist_and_enabled_filter() {
+        let path = temp_db_path();
+        {
+            let store = Store::open_path(&path).unwrap();
+            let rule = store
+                .create_gyeryeong(
+                    "No destructive prompt",
+                    "delete",
+                    GyeryeongAction::Warn,
+                    "operator review required",
+                )
+                .unwrap();
+            assert!(rule.enabled);
+            assert_eq!(store.list_enabled_gyeryeong().unwrap().len(), 1);
+
+            let disabled = store.set_gyeryeong_enabled(rule.id, false).unwrap();
+            assert!(!disabled.enabled);
+            assert!(store.list_enabled_gyeryeong().unwrap().is_empty());
+        }
+
+        {
+            let store = Store::open_path(&path).unwrap();
+            let persisted = store.list_gyeryeong(10).unwrap();
+            assert_eq!(persisted.len(), 1);
+            assert_eq!(persisted[0].title, "No destructive prompt");
+            assert_eq!(persisted[0].action, GyeryeongAction::Warn);
+            assert!(!persisted[0].enabled);
+        }
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("sqlite3-shm"));
+        let _ = fs::remove_file(path.with_extension("sqlite3-wal"));
+    }
+
+    #[test]
+    fn event_concept_parser_accepts_gyeryeong() {
+        assert_eq!(parse_concept("戒令"), Concept::Gyeryeong);
+    }
+
+    fn temp_db_path() -> PathBuf {
+        std::env::temp_dir().join(format!("honbaek-storage-test-{}.sqlite3", Uuid::new_v4()))
+    }
 }

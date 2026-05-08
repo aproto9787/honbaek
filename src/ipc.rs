@@ -1,4 +1,4 @@
-use crate::domain::{InspectState, Kaeyi, KaeyiSeverity};
+use crate::domain::{Gyeryeong, GyeryeongAction, InspectState, Kaeyi, KaeyiSeverity};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
@@ -19,6 +19,22 @@ pub enum IpcRequest {
         task: String,
     },
     Inspect,
+    GyeryeongAdd {
+        title: String,
+        pattern: String,
+        action: GyeryeongAction,
+        rationale: String,
+    },
+    GyeryeongList,
+    GyeryeongInspect {
+        id: Uuid,
+    },
+    GyeryeongEnable {
+        id: Uuid,
+    },
+    GyeryeongDisable {
+        id: Uuid,
+    },
     KaeyiList,
     KaeyiInspect {
         id: Uuid,
@@ -43,14 +59,43 @@ pub enum IpcRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum IpcResponse {
-    Ok { message: String },
-    Awakened { hon_id: Uuid, message: String },
-    Assigned { task_id: Uuid, message: String },
-    Inspect { state: Box<InspectState> },
-    KaeyiList { kaeyi: Vec<Kaeyi> },
-    KaeyiInspect { kaeyi: Box<Kaeyi> },
-    KaeyiChanged { kaeyi: Box<Kaeyi>, message: String },
-    Error { message: String },
+    Ok {
+        message: String,
+    },
+    Awakened {
+        hon_id: Uuid,
+        message: String,
+    },
+    Assigned {
+        task_id: Uuid,
+        message: String,
+    },
+    Inspect {
+        state: Box<InspectState>,
+    },
+    GyeryeongList {
+        gyeryeong: Vec<Gyeryeong>,
+    },
+    GyeryeongInspect {
+        gyeryeong: Box<Gyeryeong>,
+    },
+    GyeryeongChanged {
+        gyeryeong: Box<Gyeryeong>,
+        message: String,
+    },
+    KaeyiList {
+        kaeyi: Vec<Kaeyi>,
+    },
+    KaeyiInspect {
+        kaeyi: Box<Kaeyi>,
+    },
+    KaeyiChanged {
+        kaeyi: Box<Kaeyi>,
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 pub fn send(socket: &Path, request: &IpcRequest) -> Result<IpcResponse> {

@@ -2,7 +2,7 @@
 name = "honbaek"
 version = "0.1.0"
 edition = "2024"
-description = "A local autonomous runtime built around 魂, 魄, 心, 身, 命, and 怪異."
+description = "A local autonomous runtime built around 魂, 魄, 心, 戒令, 身, 命, and 怪異."
 license = "MIT"
 repository = "https://github.com/aproto9787/honbaek"
 readme = "README.md"

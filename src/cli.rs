@@ -1,5 +1,7 @@
 use crate::config::{AppPaths, Config};
-use crate::domain::{DEFAULT_HON_NAME, DEFAULT_PROFILE_NAME, Kaeyi, KaeyiSeverity};
+use crate::domain::{
+    DEFAULT_HON_NAME, DEFAULT_PROFILE_NAME, Gyeryeong, GyeryeongAction, Kaeyi, KaeyiSeverity,
+};
 use crate::ipc::{IpcRequest, IpcResponse};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -33,6 +35,10 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    Gyeryeong {
+        #[command(subcommand)]
+        command: GyeryeongCommand,
+    },
     Kaeyi {
         #[command(subcommand)]
         command: KaeyiCommand,
@@ -54,6 +60,29 @@ enum Command {
 enum DaemonCommand {
     Run,
     Stop,
+}
+
+#[derive(Debug, Subcommand)]
+enum GyeryeongCommand {
+    Add {
+        title: String,
+        #[arg(long)]
+        pattern: String,
+        #[arg(long, default_value = "warn")]
+        action: GyeryeongAction,
+        #[arg(long)]
+        rationale: String,
+    },
+    List,
+    Inspect {
+        id: Uuid,
+    },
+    Enable {
+        id: Uuid,
+    },
+    Disable {
+        id: Uuid,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -115,6 +144,28 @@ pub fn run() -> Result<()> {
                 other => print_response(other),
             }
         }
+        Command::Gyeryeong { command } => {
+            crate::daemon::ensure_running(&paths)?;
+            let request = match command {
+                GyeryeongCommand::Add {
+                    title,
+                    pattern,
+                    action,
+                    rationale,
+                } => IpcRequest::GyeryeongAdd {
+                    title,
+                    pattern,
+                    action,
+                    rationale,
+                },
+                GyeryeongCommand::List => IpcRequest::GyeryeongList,
+                GyeryeongCommand::Inspect { id } => IpcRequest::GyeryeongInspect { id },
+                GyeryeongCommand::Enable { id } => IpcRequest::GyeryeongEnable { id },
+                GyeryeongCommand::Disable { id } => IpcRequest::GyeryeongDisable { id },
+            };
+            let response = crate::ipc::send(&paths.socket, &request)?;
+            print_response(response)
+        }
         Command::Kaeyi { command } => {
             crate::daemon::ensure_running(&paths)?;
             let request = match command {
@@ -154,12 +205,21 @@ fn print_response(response: IpcResponse) -> Result<()> {
         IpcResponse::Ok { message }
         | IpcResponse::Awakened { message, .. }
         | IpcResponse::Assigned { message, .. }
+        | IpcResponse::GyeryeongChanged { message, .. }
         | IpcResponse::KaeyiChanged { message, .. } => {
             println!("{message}");
             Ok(())
         }
         IpcResponse::Inspect { state } => {
             crate::tui::print_inspect(&state);
+            Ok(())
+        }
+        IpcResponse::GyeryeongList { gyeryeong } => {
+            print_gyeryeong_list(&gyeryeong);
+            Ok(())
+        }
+        IpcResponse::GyeryeongInspect { gyeryeong } => {
+            print_gyeryeong_detail(&gyeryeong);
             Ok(())
         }
         IpcResponse::KaeyiList { kaeyi } => {
@@ -172,6 +232,37 @@ fn print_response(response: IpcResponse) -> Result<()> {
         }
         IpcResponse::Error { message } => anyhow::bail!("{message}"),
     }
+}
+
+fn print_gyeryeong_list(records: &[Gyeryeong]) {
+    println!("戒令 list");
+    if records.is_empty() {
+        println!("- none");
+        return;
+    }
+    for record in records {
+        println!(
+            "- {} [{} enabled={}] {} pattern={} updated={}",
+            record.id,
+            record.action,
+            record.enabled,
+            record.title,
+            record.pattern,
+            record.updated_at
+        );
+    }
+}
+
+fn print_gyeryeong_detail(record: &Gyeryeong) {
+    println!("戒令 inspect");
+    println!("id: {}", record.id);
+    println!("title: {}", record.title);
+    println!("pattern: {}", record.pattern);
+    println!("action: {}", record.action);
+    println!("enabled: {}", record.enabled);
+    println!("rationale: {}", record.rationale);
+    println!("created: {}", record.created_at);
+    println!("updated: {}", record.updated_at);
 }
 
 fn print_kaeyi_list(records: &[Kaeyi]) {

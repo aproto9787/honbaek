@@ -56,6 +56,13 @@ pub fn print_inspect(state: &InspectState) {
         "心 intent={:?} priority={} self_check={}",
         state.sim.current_intent, state.sim.priority, state.sim.self_check
     );
+    println!("戒令 rules: {}", state.gyeryeong.len());
+    for gyeryeong in state.gyeryeong.iter().take(5) {
+        println!(
+            "- 戒令 {} [{} enabled={}] {} pattern={}",
+            gyeryeong.id, gyeryeong.action, gyeryeong.enabled, gyeryeong.title, gyeryeong.pattern
+        );
+    }
     println!(
         "身 filesystem={} shell={} network={}",
         state.shin.filesystem, state.shin.shell, state.shin.network
@@ -116,6 +123,15 @@ fn print_watch_snapshot(state: &InspectState) {
     }
     println!("provider usage: {}", state.provider_usage.len());
     println!("failure recovery: journaled events available");
+    println!("戒令 summary:");
+    if let Some(gyeryeong) = state.gyeryeong.first() {
+        println!(
+            "- {} [{} enabled={}] {} pattern={}",
+            gyeryeong.id, gyeryeong.action, gyeryeong.enabled, gyeryeong.title, gyeryeong.pattern
+        );
+    } else {
+        println!("- none");
+    }
     println!("怪異 summary:");
     if let Some(kaeyi) = state.kaeyi.first() {
         println!(
@@ -171,12 +187,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &InspectState) {
             Constraint::Length(3),
             Constraint::Min(6),
             Constraint::Length(5),
+            Constraint::Length(5),
             Constraint::Length(6),
             Constraint::Length(8),
         ])
         .split(frame.area());
 
-    let title = Paragraph::new("혼백강령 watch — 魂 魄 心 身 命")
+    let title = Paragraph::new("혼백강령 watch — 魂 魄 心 戒令 身 命")
         .style(Style::default().add_modifier(Modifier::BOLD))
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, chunks[0]);
@@ -214,10 +231,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &InspectState) {
         chunks[2],
     );
 
+    let gyeryeong_lines = render_gyeryeong_lines(state);
+    frame.render_widget(
+        Paragraph::new(gyeryeong_lines).block(Block::default().title("戒令").borders(Borders::ALL)),
+        chunks[3],
+    );
+
     let kaeyi_lines = render_kaeyi_lines(state);
     frame.render_widget(
         Paragraph::new(kaeyi_lines).block(Block::default().title("怪異").borders(Borders::ALL)),
-        chunks[3],
+        chunks[4],
     );
 
     let last_action = state
@@ -254,8 +277,31 @@ fn draw(frame: &mut ratatui::Frame<'_>, state: &InspectState) {
     ];
     frame.render_widget(
         Paragraph::new(status).block(Block::default().title("status").borders(Borders::ALL)),
-        chunks[4],
+        chunks[5],
     );
+}
+
+fn render_gyeryeong_lines(state: &InspectState) -> Vec<Line<'static>> {
+    let enabled = state
+        .gyeryeong
+        .iter()
+        .filter(|gyeryeong| gyeryeong.enabled)
+        .count();
+    let mut lines = vec![Line::from(format!(
+        "rules: {} enabled: {}",
+        state.gyeryeong.len(),
+        enabled
+    ))];
+    if let Some(gyeryeong) = state.gyeryeong.first() {
+        lines.push(Line::from(format!(
+            "latest: {} [{} enabled={}]",
+            gyeryeong.title, gyeryeong.action, gyeryeong.enabled
+        )));
+        lines.push(Line::from(format!("pattern: {}", gyeryeong.pattern)));
+    } else {
+        lines.push(Line::from("latest: none"));
+    }
+    lines
 }
 
 fn render_kaeyi_lines(state: &InspectState) -> Vec<Line<'static>> {

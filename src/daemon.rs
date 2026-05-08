@@ -1,5 +1,8 @@
 use crate::config::{AppPaths, Config};
-use crate::domain::{AutonomyMode, Concept, Kaeyi, KaeyiState};
+use crate::domain::{
+    AutonomyMode, Concept, Gyeryeong, GyeryeongAction, Kaeyi, KaeyiSeverity, KaeyiState, Task,
+    TaskStatus,
+};
 use crate::executor::{emit, execute_local_repo_task};
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::journal::Journal;
@@ -143,10 +146,78 @@ fn handle_request(
                     .context("no active 魂 exists; run honbaek awaken first")?,
             };
             let task_record = store.insert_task(hon.id, &task)?;
+            if let Some(blocked_result) = apply_gyeryeong_preflight(&store, &journal, &task_record)?
+            {
+                bail!("{blocked_result}");
+            }
             execute_local_repo_task(paths, &store, &journal, provider, &task_record)?;
             Ok(IpcResponse::Assigned {
                 task_id: task_record.id,
                 message: format!("task assigned to 魂 {}", hon.name),
+            })
+        }
+        IpcRequest::GyeryeongAdd {
+            title,
+            pattern,
+            action,
+            rationale,
+        } => {
+            let gyeryeong = store.create_gyeryeong(&title, &pattern, action, &rationale)?;
+            emit_gyeryeong_event(
+                &store,
+                &journal,
+                &gyeryeong,
+                "gyeryeong.added",
+                "戒令 added as enabled runtime rule",
+                None,
+                json!({}),
+            )?;
+            Ok(IpcResponse::GyeryeongChanged {
+                message: format!("戒令 {} added", gyeryeong.id),
+                gyeryeong: Box::new(gyeryeong),
+            })
+        }
+        IpcRequest::GyeryeongList => Ok(IpcResponse::GyeryeongList {
+            gyeryeong: store.list_gyeryeong(100)?,
+        }),
+        IpcRequest::GyeryeongInspect { id } => {
+            let gyeryeong = store
+                .get_gyeryeong(id)?
+                .with_context(|| format!("戒令 {id} does not exist"))?;
+            Ok(IpcResponse::GyeryeongInspect {
+                gyeryeong: Box::new(gyeryeong),
+            })
+        }
+        IpcRequest::GyeryeongEnable { id } => {
+            let gyeryeong = store.set_gyeryeong_enabled(id, true)?;
+            emit_gyeryeong_event(
+                &store,
+                &journal,
+                &gyeryeong,
+                "gyeryeong.enabled",
+                "戒令 enabled",
+                None,
+                json!({}),
+            )?;
+            Ok(IpcResponse::GyeryeongChanged {
+                message: format!("戒令 {} enabled", gyeryeong.id),
+                gyeryeong: Box::new(gyeryeong),
+            })
+        }
+        IpcRequest::GyeryeongDisable { id } => {
+            let gyeryeong = store.set_gyeryeong_enabled(id, false)?;
+            emit_gyeryeong_event(
+                &store,
+                &journal,
+                &gyeryeong,
+                "gyeryeong.disabled",
+                "戒令 disabled",
+                None,
+                json!({}),
+            )?;
+            Ok(IpcResponse::GyeryeongChanged {
+                message: format!("戒令 {} disabled", gyeryeong.id),
+                gyeryeong: Box::new(gyeryeong),
             })
         }
         IpcRequest::KaeyiList => Ok(IpcResponse::KaeyiList {
@@ -278,6 +349,127 @@ pub fn awaken(paths: &AppPaths, name: &str, profile: &str) -> Result<IpcResponse
             profile: profile.to_string(),
         },
     )
+}
+
+fn apply_gyeryeong_preflight(
+    store: &Store,
+    journal: &Journal,
+    task: &Task,
+) -> Result<Option<String>> {
+    let prompt = task.prompt.to_lowercase();
+    let mut blocking_matches = Vec::new();
+
+    for gyeryeong in store.list_enabled_gyeryeong()? {
+        if !prompt.contains(&gyeryeong.pattern.to_lowercase()) {
+            continue;
+        }
+
+        let source_kind = match gyeryeong.action {
+            GyeryeongAction::Warn => "gyeryeong.warn",
+            GyeryeongAction::Block => "gyeryeong.block",
+        };
+        let severity = match gyeryeong.action {
+            GyeryeongAction::Warn => KaeyiSeverity::Warning,
+            GyeryeongAction::Block => KaeyiSeverity::Critical,
+        };
+        let evidence = format!(
+            "戒令 {} matched task {} pattern={:?} rationale={}",
+            gyeryeong.id, task.id, gyeryeong.pattern, gyeryeong.rationale
+        );
+        let finding = store.upsert_kaeyi(
+            &format!("戒令 match: {}", gyeryeong.title),
+            source_kind,
+            severity,
+            Some(task.id),
+            &evidence,
+        )?;
+        emit_kaeyi_event(
+            store,
+            journal,
+            &finding.kaeyi,
+            if finding.created {
+                "kaeyi.discovered"
+            } else {
+                "kaeyi.observed"
+            },
+            "怪異 linked to 戒令 task match",
+        )?;
+        emit_gyeryeong_event(
+            store,
+            journal,
+            &gyeryeong,
+            match gyeryeong.action {
+                GyeryeongAction::Warn => "gyeryeong.warn",
+                GyeryeongAction::Block => "gyeryeong.block",
+            },
+            match gyeryeong.action {
+                GyeryeongAction::Warn => "戒令 warning matched assigned task",
+                GyeryeongAction::Block => "戒令 blocked assigned task",
+            },
+            Some(task.id),
+            json!({
+                "kaeyi_id": finding.kaeyi.id,
+                "prompt": &task.prompt,
+            }),
+        )?;
+
+        if matches!(gyeryeong.action, GyeryeongAction::Block) {
+            blocking_matches.push(format!(
+                "{} ({}) pattern={:?} rationale={}",
+                gyeryeong.title, gyeryeong.id, gyeryeong.pattern, gyeryeong.rationale
+            ));
+        }
+    }
+
+    if blocking_matches.is_empty() {
+        return Ok(None);
+    }
+
+    let result = format!("blocked by 戒令: {}", blocking_matches.join("; "));
+    store.update_task(task.id, TaskStatus::Failed, Some(&result))?;
+    emit(
+        store,
+        journal,
+        Concept::Myeong,
+        "task.failed",
+        "命 recorded task blocked by 戒令",
+        Some(task.id),
+        json!({ "stage": "gyeryeong", "result": result }),
+    )?;
+    Ok(Some(result))
+}
+
+fn emit_gyeryeong_event(
+    store: &Store,
+    journal: &Journal,
+    gyeryeong: &Gyeryeong,
+    kind: &str,
+    message: &str,
+    task_id: Option<uuid::Uuid>,
+    extra: serde_json::Value,
+) -> Result<()> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("gyeryeong_id".to_string(), json!(gyeryeong.id));
+    payload.insert("title".to_string(), json!(gyeryeong.title));
+    payload.insert("pattern".to_string(), json!(gyeryeong.pattern));
+    payload.insert("action".to_string(), json!(gyeryeong.action.to_string()));
+    payload.insert("enabled".to_string(), json!(gyeryeong.enabled));
+    payload.insert("rationale".to_string(), json!(gyeryeong.rationale));
+    if let Some(extra) = extra.as_object() {
+        for (key, value) in extra {
+            payload.insert(key.clone(), value.clone());
+        }
+    }
+    emit(
+        store,
+        journal,
+        Concept::Gyeryeong,
+        kind,
+        message,
+        task_id,
+        serde_json::Value::Object(payload),
+    )?;
+    Ok(())
 }
 
 fn emit_kaeyi_event(

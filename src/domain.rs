@@ -14,6 +14,8 @@ pub enum Concept {
     Baek,
     #[serde(rename = "心")]
     Sim,
+    #[serde(rename = "戒令")]
+    Gyeryeong,
     #[serde(rename = "身")]
     Shin,
     #[serde(rename = "命")]
@@ -28,6 +30,7 @@ impl Concept {
             Self::Hon => "魂",
             Self::Baek => "魄",
             Self::Sim => "心",
+            Self::Gyeryeong => "戒令",
             Self::Shin => "身",
             Self::Myeong => "命",
             Self::Kaeyi => "怪異",
@@ -144,6 +147,47 @@ pub struct Shin {
 pub struct Myeong {
     pub identity: String,
     pub continuity_events: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GyeryeongAction {
+    #[serde(rename = "warn")]
+    Warn,
+    #[serde(rename = "block")]
+    Block,
+}
+
+impl fmt::Display for GyeryeongAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Warn => write!(f, "warn"),
+            Self::Block => write!(f, "block"),
+        }
+    }
+}
+
+impl std::str::FromStr for GyeryeongAction {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "warn" | "warning" => Ok(Self::Warn),
+            "block" | "deny" => Ok(Self::Block),
+            other => Err(format!("invalid 戒令 action {other}; use warn or block")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Gyeryeong {
+    pub id: Uuid,
+    pub title: String,
+    pub pattern: String,
+    pub action: GyeryeongAction,
+    pub rationale: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -306,6 +350,7 @@ pub struct InspectState {
     pub profiles: Vec<Profile>,
     pub baek: Baek,
     pub sim: Sim,
+    pub gyeryeong: Vec<Gyeryeong>,
     pub shin: Shin,
     pub myeong: Myeong,
     pub kaeyi: Vec<Kaeyi>,
