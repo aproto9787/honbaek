@@ -1,19 +1,40 @@
-# Honbaek
+<p align="center">
+  <img src="docs/assets/honbaek-banner.svg" alt="Honbaek local autonomous runtime" width="100%">
+</p>
 
-Honbaek is a local autonomous runtime built around six runtime concepts:
+<h1 align="center">Honbaek</h1>
 
-- `魂` active runtime subject
-- `魄` provider-backed capability substrate
-- `心` current intent and self-check state
-- `身` local tools, filesystem, shell, and network boundary
-- `命` durable identity and journaled continuity
-- `怪異` anomalous runtime entities discovered from failures, discontinuities, and provider/tool tension
+<p align="center">
+  <a href="https://github.com/aproto9787/honbaek/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/aproto9787/honbaek/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-0f172a">
+  <img alt="Rust" src="https://img.shields.io/badge/rust-2024-7c2d12">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-daemon%20%2B%20TUI-1e3a8a">
+  <img alt="Storage" src="https://img.shields.io/badge/local--first-SQLite%20%2B%20JSONL-14532d">
+</p>
 
-It ships as a single Rust CLI and daemon. Runtime state is local-first under `~/.honbaek/` using SQLite for structured state and JSONL for append-only history.
+<p align="center">
+  <strong>혼백강령 as a local autonomous runtime.</strong><br>
+  Organize active runtime subject, provider substrate, intent, local body, continuity, and anomalies without turning the machine into a hosted service.
+</p>
 
-## Status
+---
 
-This project is experimental and intentionally strange. It is usable as a local CLI runtime, not a hosted service.
+## What It Is
+
+Honbaek is a Rust CLI, daemon, and TUI-shaped runtime for local autonomous work. It keeps runtime state under `~/.honbaek/`, uses SQLite for structured state, and writes append-only JSONL journals for continuity.
+
+The project is intentionally strange, but the implementation is practical: commands wake a local daemon, assign work, inspect state, watch the timeline, configure an OpenAI-compatible provider boundary, and record `怪異` anomalies when the runtime observes tension or failure.
+
+## Concept Map
+
+| Concept | Reading | Runtime Role |
+| --- | --- | --- |
+| `魂` | hon | Active runtime subject: a named local identity that can receive work. |
+| `魄` | baek | Provider-backed capability substrate: model adapter and completion boundary. |
+| `心` | sim | Current intent and self-check state. |
+| `身` | sin | Local body: filesystem, shell, network, and tool boundary. |
+| `命` | myeong | Durable identity and journaled continuity. |
+| `怪異` | kaeyi | Anomalous runtime entity discovered from failures, discontinuity, and provider/tool tension. |
 
 ## Install
 
@@ -34,17 +55,40 @@ target/release/honbaek --help
 honbaek awaken --name default --profile unbound
 honbaek assign --hon default "create a short runtime status note for this workspace"
 honbaek inspect
+honbaek watch --once
 honbaek watch
 ```
 
 The daemon starts automatically when a command needs it.
 
-## 怪異
+## Watch Preview
 
-`怪異` records anomalies in the runtime. It supports manual recording and local scans without destructive remediation.
+`watch --once` gives a terminal snapshot of the local runtime timeline.
+
+```text
+혼백강령 watch
+timeline:
+- 命 [daemon.shutdown] honbaek daemon received shutdown
+- 怪異 [kaeyi.observed] 怪異 observed by local scan
+current task:
+- <task-id> completed create a short runtime status note for this workspace
+provider usage: 0
+failure recovery: journaled events available
+怪異 summary:
+- <kaeyi-id> [warning 發現] Provider fallback source=provider.not_configured
+```
+
+Run `honbaek watch` without `--once` for the live TUI.
+
+## 怪異 Workflow
+
+`怪異` records runtime anomalies. It supports manual recording and local scans without destructive remediation.
 
 ```bash
-honbaek kaeyi record "Manual omen" --evidence "operator observed unexpected runtime tension" --severity warning
+honbaek kaeyi record "Manual omen" \
+  --evidence "operator observed unexpected runtime tension" \
+  --severity warning
+
 honbaek kaeyi list
 honbaek kaeyi inspect <id>
 honbaek kaeyi contain <id> --note "held for observation"
@@ -52,17 +96,36 @@ honbaek kaeyi resolve <id> --note "explained by audit"
 honbaek kaeyi scan
 ```
 
-Lifecycle states are shown with Hanja labels:
+Lifecycle states are displayed with Hanja labels:
 
-- `發現` discovered
-- `觀測` observed
-- `封印` contained
-- `解消` resolved
-- `歸屬` attributed
+| State | Meaning |
+| --- | --- |
+| `發現` | Discovered |
+| `觀測` | Observed |
+| `封印` | Contained |
+| `解消` | Resolved |
+| `歸屬` | Attributed |
+
+## Architecture
+
+```text
+honbaek CLI
+    |
+    | wakes / commands
+    v
+local daemon
+    |
+    +-- 魂 identity registry
+    +-- 心 intent state
+    +-- 魄 provider adapter
+    +-- 身 local tool boundary
+    +-- 命 SQLite + JSONL continuity
+    +-- 怪異 anomaly ledger
+```
+
+The runtime is local-first. Provider calls are optional and isolated behind an OpenAI-compatible adapter. Secrets are read from environment variables and are not written into `~/.honbaek/config.toml`.
 
 ## Provider Configuration
-
-Honbaek includes an OpenAI-compatible provider adapter. Provider secrets are read from environment variables only and are not stored in `~/.honbaek/config.toml`.
 
 ```bash
 export OPENAI_API_KEY="..."
@@ -71,12 +134,14 @@ export HONBAEK_OPENAI_MODEL="gpt-5.5"
 
 Useful environment overrides:
 
-- `HONBAEK_HOME`
-- `HONBAEK_PROVIDER`
-- `HONBAEK_OPENAI_BASE_URL`
-- `HONBAEK_OPENAI_MODEL`
-- `HONBAEK_OPENAI_API_KEY_ENV`
-- `HONBAEK_OPENAI_API_KEY`
+| Variable | Purpose |
+| --- | --- |
+| `HONBAEK_HOME` | Override the runtime state directory. |
+| `HONBAEK_PROVIDER` | Select the provider implementation. |
+| `HONBAEK_OPENAI_BASE_URL` | Override the OpenAI-compatible API base URL. |
+| `HONBAEK_OPENAI_MODEL` | Select the provider model. |
+| `HONBAEK_OPENAI_API_KEY_ENV` | Read the API key from a named environment variable. |
+| `HONBAEK_OPENAI_API_KEY` | Direct API key override for local sessions. |
 
 ## Service And Completions
 
@@ -95,6 +160,12 @@ honbaek completions fish > honbaek.fish
 honbaek completions zsh > _honbaek
 ```
 
+## Safety Boundaries
+
+Honbaek observes, records, contains, and resolves local runtime state. `怪異` scan and containment paths do not automatically delete files, kill processes, mutate external services, or make destructive network changes.
+
+Provider secrets should stay in the environment. Runtime state is designed for local use, not multi-user hosting.
+
 ## Verification
 
 ```bash
@@ -105,9 +176,15 @@ cargo build --release
 scripts/smoke.sh
 ```
 
-## Safety
+CI runs the same core checks on every push.
 
-Honbaek is local-first. `怪異` scan and containment paths observe, record, contain, and resolve local runtime state. They do not automatically delete files, kill processes, mutate external services, or make destructive network changes.
+## Roadmap
+
+- Richer live TUI panes for `魂`, `命`, and `怪異`.
+- Better provider usage accounting and failure attribution.
+- More local scan sources for anomaly detection.
+- Import/export tools for runtime journals.
+- Packaged release artifacts for Linux workstations.
 
 ## License
 
